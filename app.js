@@ -7,6 +7,7 @@ const multer = require("multer");
 
 
 const feedRoutes = require("./routes/feeds");
+const authRoutes = require("./routes/auth");
 
 
 const fileStorage = multer.diskStorage({
@@ -49,6 +50,7 @@ app.use((req, res, next) => {
 });
 
 app.use(feedRoutes);
+app.use(authRoutes);
 
 app.use((error, req, res, next) => {
   console.log(error);
