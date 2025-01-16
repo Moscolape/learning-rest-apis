@@ -4,11 +4,13 @@ const bodyParser = require("body-parser");
 const mongoose = require("mongoose");
 const path = require("path");
 const multer = require("multer");
-
+const http = require("http");
+const socket = require("./socket");
 
 const feedRoutes = require("./routes/feeds");
 const authRoutes = require("./routes/auth");
 
+const server = http.createServer(app);
 
 const fileStorage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -31,7 +33,6 @@ const fileFilter = (req, file, cb) => {
     cb(null, false);
   }
 };
-
 
 app.use(bodyParser.json());
 app.use(
@@ -64,7 +65,10 @@ mongoose
     "mongodb+srv://Moscolian:ilovedherin2019@cluster0.cz0tz.mongodb.net/messages?retryWrites=true"
   )
   .then(() => {
-    console.log("Mongo is connected...");
-    app.listen(8080);
+    console.log("Connected to MongoDB!");
+    const serverInstance = server.listen(8080, () => {
+      console.log("Server is running on port 8080...");
+    });
+    socket.init(serverInstance);
   })
   .catch((err) => console.log(err));

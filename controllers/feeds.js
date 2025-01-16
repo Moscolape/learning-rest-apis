@@ -3,6 +3,7 @@ const Post = require("../models/posts");
 const fs = require("fs");
 const path = require("path");
 const User = require("../models/users");
+const io = require("../socket");
 
 exports.getPosts = async (req, res, next) => {
   const page = parseInt(req.query.page) || 1;
@@ -11,7 +12,8 @@ exports.getPosts = async (req, res, next) => {
   try {
     const totalItems = await Post.countDocuments();
     const posts = await Post.find()
-      .populate('creator')
+      .populate("creator")
+      .sort({createdAt: -1})
       .skip((page - 1) * perPage)
       .limit(perPage);
 
@@ -50,20 +52,30 @@ exports.addPost = async (req, res, next) => {
       imageUrl,
       creator: req.userId,
     });
-    await post.save();
+    const savedPost = await post.save();
 
+    // Find the user and add the post to their `posts` array
     const user = await User.findById(req.userId);
-    if (user) {
+    if (!user) {
+      const error = new Error("User not found!");
       // @ts-ignore
-      user.posts.push(post);
-      await user.save();
+      error.statusCode = 404;
+      throw error;
     }
+
+    user.posts.push(savedPost._id); // Add the post ID to the user's `posts` array
+    await user.save(); // Save the updated user document
+
+    // Emit event to all connected clients
+    io.getIO().emit("posts", {
+      action: "create",
+      // @ts-ignore
+      post: { ...savedPost._doc, creator: { name: user.name } },
+    });
 
     res.status(201).json({
       message: "Post created successfully!",
-      post,
-      // @ts-ignore
-      creator: { _id: user._id, name: user.name },
+      post: savedPost,
     });
   } catch (err) {
     if (!err.statusCode) {
@@ -137,7 +149,7 @@ exports.editPost = async (req, res, next) => {
   }
 
   try {
-    const post = await Post.findById(postId);
+    const post = await Post.findById(postId).populate("creator");
 
     if (!post) {
       const error = new Error("Post not found!");
@@ -146,7 +158,7 @@ exports.editPost = async (req, res, next) => {
       throw error;
     }
 
-    if (post.creator.toString() !== req.userId.toString()) {
+    if (post.creator._id.toString() !== req.userId.toString()) {
       return res.status(403).json({
         message: "Unauthorized user!",
       });
@@ -164,6 +176,17 @@ exports.editPost = async (req, res, next) => {
 
     const updatedPost = await post.save();
 
+    // Emit event to all connected clients
+    io.getIO().emit("posts", {
+      action: "update",
+      post: {
+        // @ts-ignore
+        ...updatedPost._doc,
+        // @ts-ignore
+        creator: { _id: post.creator._id, name: post.creator.name }
+      },
+    });
+
     res.status(200).json({
       message: "Post updated successfully!",
       post: updatedPost,
@@ -180,7 +203,7 @@ exports.deletePost = async (req, res, next) => {
   const postId = req.params.postId;
 
   try {
-    const post = await Post.findById(postId);
+    const post = await Post.findById(postId).populate("creator");
 
     if (!post) {
       const error = new Error("Post not found!");
@@ -189,22 +212,31 @@ exports.deletePost = async (req, res, next) => {
       throw error;
     }
 
-    if (post.creator.toString() !== req.userId.toString()) {
+    if (post.creator._id.toString() !== req.userId.toString()) {
       return res.status(403).json({
         message: "Unauthorized user!",
       });
     }
 
+    // Delete the associated image file
     clearImage(post.imageUrl);
 
-    const user = await User.findById(post.creator);
+    // Remove the post from the creator's list of posts
+    const user = await User.findById(post.creator._id);
     if (user) {
       // @ts-ignore
       user.posts.pull(postId);
       await user.save();
     }
 
+    // Delete the post
     await Post.findByIdAndDelete(postId);
+
+    // Emit event to all connected clients
+    io.getIO().emit("posts", {
+      action: "delete",
+      postId, // Send only the ID of the deleted post
+    });
 
     res.status(200).json({
       message: "Post deleted successfully!",
